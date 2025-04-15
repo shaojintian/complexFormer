@@ -70,8 +70,6 @@ class TransformerBlock(nn.Module):
     
 
 class MlutiLatentAtten(nn.Module):
-    def __size__(self):
-        pass
     def __init__(self, config,use_cache=True,drooutp=0.01):
         super().__init__()
 

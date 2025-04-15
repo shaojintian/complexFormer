@@ -8,9 +8,28 @@ multiple_of : 32
 dropout : 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias : False # do we use bias inside LayerNorm and Linear layers?
 intermediate_size : 1024
-vocab_size: 64793
+vocab_size: 60000
 rope_scaling_factor: 1.0
 rope_beta: 10000.0
 rope_scaling_type: 'dynamic'
 embedding_type: 'default'  # default/Abacus
 batch_size: 1
+
+# training
+train:
+  epochs: 1
+  steps_per_epoch: 1
+  learning_rate: 1e-4
+  learning_rate_decay: 0.0
+  warmup_steps: 1000
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1e-8
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  seed: 42
+  fp16: False
+  fp16_opt_level: 'O1'
+  gradient_checkpointing: False
+  gradient_checkpointing_kwargs: {}
