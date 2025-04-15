@@ -14,6 +14,9 @@ rope_beta: 10000.0
 rope_scaling_type: 'dynamic'
 embedding_type: 'default'  # default/Abacus
 batch_size: 1
+max_input_ids_length: 4000
+tokenizer_name: './tokenizer/' 
+data_path: './dataset/da'
 
 # training
 train:

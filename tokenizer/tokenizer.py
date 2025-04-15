@@ -43,7 +43,7 @@ class TokenEmbedder:
 # 示例用法
 if __name__ == "__main__":
     embedder = TokenEmbedder(model_path="./tokenizer/gogpt_60k.model", embed_dim=512)
-    embeddings = embedder.encode_text("这是一个测试")
+    embeddings = embedder.encode_text("这是一个测试"),
     input_ids = embedder.encode_as_ids("这是一个测试")
     print(f"Input IDs: {input_ids}")  # 输出: [1, 2, 3, 4]
     print(f"Embeddings shape: {embeddings.shape}")  # 输出: torch.Size([7, 256])
