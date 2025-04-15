@@ -1,0 +1,7 @@
+# ninja log v5
+1	2690	1744368220721591882	/root/general-cuda-kernel/build/temp.linux-x86_64-cpython-311/operators/gemm.o	863c779b8d4930f9
+1	25201	1744368243213683724	/root/general-cuda-kernel/build/temp.linux-x86_64-cpython-311/operators/gemm_op.o	748d98fadae4c63c
+1	20	1744369334145716212	/root/general-cuda-kernel/build/temp.linux-x86_64-cpython-311/operators/gemv_op.o	b9c138f2e0b9db97
+0	2427	1744369336545724452	/root/general-cuda-kernel/build/temp.linux-x86_64-cpython-311/operators/gemv.o	121a03a571c42c0f
+2	41	1744369336845725482	/root/general-cuda-kernel/build/temp.linux-x86_64-cpython-311/operators/ffn_op.o	bec275bc2d16cfad
+0	2204	1744369339005732898	/root/general-cuda-kernel/build/temp.linux-x86_64-cpython-311/operators/ffn.o	774caa9b7941904a

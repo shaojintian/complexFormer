@@ -1,0 +1,7 @@
+conv2d_op
+ffn_op
+gemm_op
+gemv_op
+maxpool2d_op
+mha_op
+rope_op
