@@ -29,20 +29,18 @@ cuda kernel:1.3GB
 sum = weight + gradient + optimizer + cuda kernel = 23GB
 
 5.pretraining
-    loss: cross entropy 
-    optimizer: adamw
-    scheduler: cosine
-    lr: 1e-4
-    batch size: 8
-    epoch: one epoch technique
-    warmup: 0.1
-    mixed-priceision train
+    self-defined model
 
-6. posttraing
-RLHF(DPO)
-    reward-model
+6. sft
+    gpt2
 
-7. evaluation
+
+7. posttraing
+
+    7.1reward-model
+    7.2rlhf(ppo)
+
+8. evaluation
 MMLU HELM
 
 

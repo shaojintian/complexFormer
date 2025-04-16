@@ -127,14 +127,20 @@ if __name__ == '__main__':
     argparser.add_argument('--config', type=str, default='config.yaml', help='Path to the config file')
     args = argparser.parse_args()
 
-    model = MyDecoderOnlyModel(config=load_config(args.config))
-    #model = [batch_size,seq_len]
-    print(model(torch.randint(0, 10000, (1, 10)), torch.ones((1, 1)).bool()).shape)
-    m = model(torch.randint(0, 10000, (1, 10)), torch.ones((1, 1)).bool()).shape
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
+
+    model = MyDecoderOnlyModel(config=load_config(args.config)).to(device)
+    #model = vocab_size [batch_size,seq_len]
+    input_ids = torch.randint(0, 10000, (1, 10), device=device)
+    attention_mask = torch.ones((1, 1), device=device).bool()
+    #print(model(torch.randint(0, 10000, (1, 10)), torch.ones((1, 1)).bool()).shape)
+    #m = model(torch.randint(0, 10000, (1, 10),device=device), torch.ones((1, 1),device=device).bool())
     #[batch_size, seq_len, vocab_size]
-    torchviz.make_dot(model)
+    output = model(input_ids, attention_mask)
+    torchviz.make_dot(output).render(filename='graph.png', format='png')
     # writer = SummaryWriter()
-    # writer.add_graph(model, (torch.randint(0, 10000, (1, 10)), torch.ones((1, 1)).bool()))
+    # writer.add_graph(model, (input_ids,attention_mask))
 
     # writer.close()
     
