@@ -26,9 +26,9 @@ self_config = load_config("./pretrain/config.yaml")
 model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2")
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 
-# # 计算参数量
-# num_params = sum(p.numel() for p in model.parameters())
-# print(f"模型参数量: {num_params}")
+# 计算参数量
+num_params = sum(p.numel() for p in model.parameters())
+print(f"模型参数量: {num_params}")
 
 
 def find_files(dirs):
