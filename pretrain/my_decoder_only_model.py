@@ -5,8 +5,17 @@ import torchviz
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 import argparse
+from transformers import PreTrainedModel,
 
-class MyDecoderOnlyModel(nn.Module):
+class CustomConfig(PretrainedConfig):
+    def __init__(self, vocab_size=152064, hidden_dim=512, intermediate_size=1024,**kwargs):
+        super().__init__(**kwargs)
+        self.vocab_size = vocab_size
+        self.hidden_dim = hidden_dim
+        self.intermediate_size =intermediate_size
+    
+
+class MyDecoderOnlyModel(PreTrainedModel):
     def __init__(self, config):
         super().__init__()
         self.config = config

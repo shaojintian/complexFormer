@@ -9,21 +9,27 @@ from transformers import (
     DataCollatorForLanguageModeling,
     Trainer,
     TrainingArguments,
+    AutoModel
 )
 from utils.utils import load_config,get_gpu_memory
 from torch.utils.tensorboard import SummaryWriter
-
+from .my_decoder_only_model import CustomConfig, MyDecoderOnlyModel
 
 # 设置环境变量以优化CUDA内存分配
 # os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 
 # 加载分词器与模型
 output_path = "results/pt"
-model_path = "DeepCoder-14B-Preview"
-config = AutoConfig.from_pretrained(model_path)
-print(config)
+model_path = "DeepCoder-14B-Preview/"
+# config = AutoConfig.from_pretrained(model_path)
+# print(config)
 self_config = load_config("./pretrain/config.yaml")
-model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.bfloat16, attn_implementation="flash_attention_2")
+
+AutoModel.register(CustomConfig,MyDecoderOnlyModel)
+
+model = AutoModel.from_pretrained(
+    "./pretrain/",
+    config=self_config)
 tokenizer = AutoTokenizer.from_pretrained(model_path)
 
 # 计算参数量
