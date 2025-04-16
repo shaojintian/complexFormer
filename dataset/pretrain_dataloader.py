@@ -5,6 +5,8 @@ from datasets import load_dataset
 
 from tokenizer import TokenEmbedder
 
+import tqdm 
+
 # 设置环境变量以优化CUDA内存分配
 # os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:128'
 
