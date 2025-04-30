@@ -1,0 +1,100 @@
+architecture: Cybertron
+max_seq_len: 512
+hidden_dim: 512
+n_layers: 8
+num_attention_heads: 8
+multiple_of: 32
+dropout: 0.0
+bias: false
+intermediate_size: 1024
+vocab_size: 60000
+rope_scaling_factor: 1.0
+rope_beta: 10000.0
+rope_scaling_type: dynamic
+embedding_type: default
+batch_size: 1
+max_input_ids_length: 4000
+tokenizer_name: ./tokenizer/
+data_path: ./dataset/da
+train:
+  epochs: 1
+  steps_per_epoch: 1
+  learning_rate: 0.0001
+  learning_rate_decay: 0.0
+  warmup_steps: 1000
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1.0e-08
+  gradient_accumulation_steps: 1
+  max_grad_norm: 1.0
+  seed: 42
+  fp16: false
+  fp16_opt_level: O1
+  gradient_checkpointing: false
+  gradient_checkpointing_kwargs: {}
+  output_pat: results/nightmare_1.5b
+mode: train
+diffusion: absorbing_state
+seed: 42
+block_size: ${model.length}
+loader:
+  global_batch_size: 512
+  eval_global_batch_size: ${.global_batch_size}
+  batch_size: ${div_up:${.global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}
+  eval_batch_size: ${div_up:${.eval_global_batch_size}, ${eval:${trainer.devices}
+    * ${trainer.num_nodes}}}
+  num_workers: ${eval:"len(__import__('os').sched_getaffinity(0))"}
+  pin_memory: true
+sampling:
+  noise_removal: false
+  num_sample_batches: 1
+  var_length: false
+  logdir: ./samples_${algo.name}_len${model.length}_blocksize${block_size}
+  nucleus_p: 1.0
+  first_hitting: true
+  kv_cache: false
+training:
+  ema: 0.9999
+  antithetic_sampling: true
+  sampling_eps: 0.001
+  coeff_clip: -1.0
+  resample: false
+  sampling_eps_min: 0.001
+  sampling_eps_max: 1.0
+  from_pretrained: null
+  eval_nll: true
+eval:
+  checkpoint_path: ${cwd:}/checkpoints/last.ckpt
+  disable_ema: false
+  perplexity_batch_size: 8
+  compute_perplexity_on_sanity: false
+  gen_ppl_eval_model_name_or_path: gpt2-large
+  generate_samples: false
+optim:
+  weight_decay: 0
+  lr: 0.0003
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1.0e-08
+trainer:
+  _target_: lightning.Trainer
+  accelerator: cuda
+  num_nodes: 1
+  devices: ${device_count:}
+  accumulate_grad_batches: ${div_up:${loader.global_batch_size}, ${eval:${trainer.devices}
+    * ${loader.batch_size} * ${trainer.num_nodes}}}
+  gradient_clip_val: 1.0
+  precision: bf16
+  num_sanity_val_steps: 2
+  max_steps: 1000000
+  log_every_n_steps: 1000
+  limit_train_batches: 1.0
+  limit_val_batches: 1.0
+  val_check_interval: 10000
+checkpointing:
+  save_dir: ${cwd:}
+  resume_from_ckpt: true
+  resume_ckpt_path: ${.save_dir}/checkpoints/last.ckpt
+data:
+  train: ./dataset/da
