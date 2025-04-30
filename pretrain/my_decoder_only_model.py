@@ -5,7 +5,7 @@ import torchviz
 from torch.utils.tensorboard import SummaryWriter
 import yaml
 import argparse
-from transformers import PreTrainedModel,
+from transformers import PreTrainedModel,PretrainedConfig
 
 class CustomConfig(PretrainedConfig):
     def __init__(self, vocab_size=152064, hidden_dim=512, intermediate_size=1024,**kwargs):
