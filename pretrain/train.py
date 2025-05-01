@@ -3,6 +3,7 @@ import torch
 from itertools import chain
 from datasets import load_dataset
 import hydra
+from typing import Optional, List
 from transformers import (
     AutoConfig,
     # AutoModelForCausalLM, # Not needed if using AutoModel with custom
@@ -22,6 +23,7 @@ from transformers import Trainer
 import math # Import math for isnan check
 from transformers.trainer_utils import get_last_checkpoint
 from rich import traceback
+from typing import Dict, Tuple, Union
 
 # 启用彩色回溯
 traceback.install()
@@ -154,7 +156,7 @@ def main(config):
     config_yaml_path = "./pretrain/config.yaml" # Path to your YAML config
 
     # --- Load Model and Tokenizer ---
-    self_config = load_config(config_yaml_path) # Load your custom config dict/object
+    self_config = config # Load your custom config dict/object
     # If self_config needs conversion to a HuggingFace Config object:
     # from transformers import PretrainedConfig
     # if isinstance(self_config, dict):
@@ -169,9 +171,9 @@ def main(config):
     # Assuming CustomConfig is a class inheriting from PretrainedConfig
     # Assuming MyDecoderOnlyModel inherits from PreTrainedModel
     # AutoModel.register(CustomConfig, MyDecoderOnlyModel) # You might need specific class names
-
+    #print("-------------Tokenizer path:", os.path.abspath(config.tokenizer_name))
     # Load Tokenizer - Use the original base model's tokenizer usually
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name,trust_remote_code=True)
     # *** Important: Define or add the [MASK] token if it doesn't exist ***
 
 
@@ -185,7 +187,7 @@ def main(config):
     )
 
     # Resize token embeddings if new tokens were added
-
+    
 
     # --- Calculate Parameters ---
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad) # Count only trainable
@@ -321,7 +323,6 @@ def main(config):
         args=training_args,
         data_collator=collator,
         train_dataset=train_dataset,
-        eval_dataset=test_dataset,
         tokenizer=tokenizer,
         compute_metrics=compute_metrics_simple, # Add back if you want eval metrics
         mask_token_id=mask_token_id, # Pass the determined mask token ID

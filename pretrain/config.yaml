@@ -15,7 +15,7 @@ rope_scaling_type: 'dynamic'
 embedding_type: 'default'  # default/Abacus
 batch_size: 1
 max_input_ids_length: 4000
-tokenizer_name: './tokenizer/' 
+tokenizer_name: 'Qwen/Qwen2.5-1.5B' 
 data_path: './dataset/da'
 
 # training
@@ -129,7 +129,7 @@ trainer:
 
 hydra:
   run:
-    dir: ./outputs/${data.train}/${now:%Y.%m.%d}/${now:%H%M%S}
+    dir: ./
   job:
     chdir: true
 
