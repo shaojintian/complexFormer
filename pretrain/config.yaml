@@ -100,7 +100,8 @@ training:
   gradient_checkpointing: False
   gradient_checkpointing_kwargs: {}
   output_path: ./checkpoints/last.ckpt
-  final_path: ./checkpoints/last.ckpt/final_model
+  #final_path: ./checkpoints/last.ckpt/final_model
+  final_path: ./model #-------------------------------
   log_step: 100
   debug: False
   batch_size: 8

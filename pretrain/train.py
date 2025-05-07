@@ -17,7 +17,8 @@ from transformers import (
     DataCollatorForLanguageModeling,
     TrainingArguments,
     AutoModel,
-    PreTrainedModel
+    PreTrainedModel,
+    AutoModelForCausalLM
 )
 import torch.nn.functional as F
 from transformers import Trainer, DataCollatorForLanguageModeling, TrainerCallback
@@ -55,7 +56,10 @@ def main(config):
     AutoConfig.register("autodiffusion", CustomConfig)
     AutoModel.register(CustomConfig, MyDecoderOnlyModel)
 
-    # Initialize DeepSpeed plugin for pipeline and tensor parallelism
+    # Load the custom model
+    customConfig = AutoConfig.from_pretrained(config.model.save_dir, trust_remote_code=True)
+    
+# Initialize DeepSpeed plugin for pipeline and tensor parallelism
     ds_plugin = DeepSpeedPlugin(
         zero_stage=config.deepspeed.zero_stage,
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
@@ -68,16 +72,14 @@ def main(config):
         deepspeed_plugin=ds_plugin,
     )
 
-    # Load the custom model
-    customConfig = AutoConfig.from_pretrained(config.model.save_dir, trust_remote_code=True)
-    model = AutoModel.from_pretrained(
-        config.model.custom_model_load_path,
-        config=customConfig,
-        trust_remote_code=True,
-        local_files_only=True,
-    )
-
     if config.mode == "train":
+        
+        model = AutoModel.from_pretrained(
+            config.model.custom_model_load_path,
+            config=customConfig,
+            trust_remote_code=True,
+            local_files_only=True,
+        )
         # Initialize W&B
         if accelerator.is_main_process:
             wandb.init(
@@ -257,6 +259,7 @@ def main(config):
             wandb.finish()
 
     elif config.mode == "sample":
+        device = ('cuda' if torch.cuda.is_available() else 'cpu')
         @torch.no_grad()
         def _inference(config):
             model = AutoModel.from_pretrained(
@@ -268,24 +271,20 @@ def main(config):
             tokenizer.padding_side = "left" # Important for generation
 
             input_text = "Please tell me some information about China "
-            inputs = tokenizer(input_text, return_tensors="pt", truncation=True, padding="max_length", max_length=config.max_seq_len).to(accelerator.device)
+            inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=config.max_seq_len).to(accelerator.device)
             input_ids: Tensor = inputs.input_ids
-
+            attention_mask: Tensor = inputs.attention_mask
+            print(f"Input IDs: {input_ids.shape}")
             print(input_text, end="", flush=True)
-            generated_tokens = model.generate(
-                inputs.input_ids,
-                attention_mask=inputs.attention_mask,
-                max_length=config.max_seq_len,
-                do_sample=True,
-                top_p=0.95,
-                top_k=50,
-                temperature=1.0,
-                pad_token_id=tokenizer.pad_token_id,
-                eos_token_id=tokenizer.eos_token_id,
-            )
-            output_text = tokenizer.decode(generated_tokens[0][len(inputs['input_ids'][0]):], skip_special_tokens=True)
-            print(output_text)
-
+            #genereate
+            output = model(**inputs)
+            logits = output
+            for _ in range(config.max_seq_len - input_ids.shape[1]):
+                next_token_id = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(0)
+                input_ids = torch.cat([input_ids, next_token_id], dim=1)
+                inputs_ids = tokenizer.decode(next_token_id[0], skip_special_tokens=True)
+                print(inputs_ids, end=" ", flush=True)
+                output = model(input_ids,attention_mask=attention_mask)
         _inference(config)
     elif config.mode == "ppl_eval":
         pass
