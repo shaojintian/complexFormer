@@ -75,6 +75,8 @@ class MyDecoderOnlyModel(PreTrainedModel):
     def can_generate(self)-> bool:
         return True
 
+
+
     def forward(self, input_ids: Tensor, attention_mask: Tensor, labels: Optional[Tensor] = None, use_checkpoint: bool = False,token_type_ids = None) -> Tensor:
         #
         if torch.isnan(input_ids).any() or torch.isinf(input_ids).any():
@@ -242,6 +244,7 @@ class TransformerBlock(nn.Module):
         logger.info(f"TransformerBlock Input shape: {x.shape}")
         seq_len: int = x.shape[1]
         causal_mask: Tensor = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(x.device)
+        
 
         def atten_forward(x: Tensor) -> Tensor:
             return self.attention(x, x, x, attn_mask=causal_mask)[0]
@@ -250,12 +253,16 @@ class TransformerBlock(nn.Module):
             atten_forward = ComplexMultiHeadAttentionV2(self.config.hidden_dim, self.config.num_attention_heads).to(x.device)
             x = atten_forward(x, x, x, mask=padding_mask)
         else:
-            x = atten_forward(x)
-        x = self.rmsnorm(x + residual)
+            #TODO
+            logger.warning(f'before forward{x.dtype}')
+            x = atten_forward(x.bfloat16())
+            logger.warning(f'after forward{x.dtype}')
+        x = self.rmsnorm(x + residual).to(torch.bfloat16)
+        logger.warning(f"TransformerBlock after rmsnorm shape: {x.shape}")
 
-        residual = x
-        x = self.ffn(x) 
-        x = self.rmsnorm(x + residual)
+        residual = x.bfloat16()
+        x = self.ffn(x.bfloat16())
+        x = self.rmsnorm(x + residual).to(torch.bfloat16)   
         return x
 
 
@@ -303,6 +310,9 @@ class MlutiLatentAtten(nn.Module):
         return atten_output
 
 
+
+
+
 def load_config(config_path: str) -> CustomConfig:
     with open(config_path, 'r') as f:
         config_dict: Dict[str, Any] = yaml.safe_load(f)
@@ -331,7 +341,7 @@ def main(config: Dict[str, Any]) -> None:
 
      # --- Calculate Parameters ---
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad) # Count only trainable
-    logger.info(f"Trainable model parameters: {num_params/1e9:,}B")
+    logger.warning(f"Trainable model parameters: {num_params/1e9:,}B")
 
 
 def test_model(model: MyDecoderOnlyModel,config) -> None:
@@ -352,3 +362,6 @@ def test_model(model: MyDecoderOnlyModel,config) -> None:
 
 if __name__ == '__main__':
     main()
+
+
+

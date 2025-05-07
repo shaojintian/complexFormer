@@ -16,4 +16,6 @@
 
 export TORCH_DISTRIBUTED_DEBUG=INFO
 export HYDRA_FULL_ERROR=1
-accelerate launch --config_file ./pretrain/acc_config.yaml pretrain/train.py
+accelerate launch --config_file ./pretrain/acc_config.yaml pretrain/train_eval.py
+
+#ps aux | grep "NightMare6B/venv/bin/python" | grep -v grep | awk '{print $2}' | xargs kill -9

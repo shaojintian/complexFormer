@@ -220,13 +220,13 @@ def main(config):
 
         last_checkpoint = None
         if os.path.isdir(training_args.output_dir) and accelerator.is_main_process:
-            last_checkpoint = get_last_checkpoint(training_args.output_dir)
+            last_checkpoint = get_last_checkpoint(config.checkpointing.resume_ckpt_path)
             if last_checkpoint:
-                logger.info(f"Checkpoint detected, resuming training from: {last_checkpoint}")
+                logger.warning(f"Checkpoint detected, resuming training from: {last_checkpoint}")
             elif any(f.startswith("checkpoint-") for f in os.listdir(training_args.output_dir)):
                 logger.warning(f"Checkpoint folders found in {training_args.output_dir}, but get_last_checkpoint failed. Specify path manually if needed.")
             else:
-                logger.info(f"No checkpoint found in {training_args.output_dir}. Starting training from scratch.")
+                logger.warning (f"No checkpoint found in {training_args.output_dir}. Starting training from scratch.")
 
         logger.info("Starting training with Accelerate and DeepSpeed...")
         try:
@@ -253,7 +253,13 @@ def main(config):
             import traceback
             traceback.print_exc()
             logger.error("Attempting to save accelerator state due to error...")
+            trainer._save_checkpoint(model, trial=None, metrics=None)
             accelerator.save_state(training_args.output_dir + "/error_state")
+        finally:
+            logger.error("Attempting to save accelerator state due to error...")
+            trainer._save_checkpoint(model, trial=None, metrics=None)
+            accelerator.save_state(training_args.output_dir + "/error_state")
+
 
         if accelerator.is_main_process:
             wandb.finish()
