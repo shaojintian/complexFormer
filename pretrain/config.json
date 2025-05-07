@@ -1,38 +1,129 @@
 {
-  "architecture": "Cybertron",
-  "max_seq_len": 512,
-  "hidden_dim": 512,
-  "n_layers": 8,
-  "num_attention_heads": 8,
-  "multiple_of": 32,
-  "dropout": 0.0,
+  "architecture": "AutoDiffusionLM",
+  "architectures": [
+    "MyDecoderOnlyModel"
+  ],
+  "batch_size": 32,
   "bias": false,
-  "intermediate_size": 1024,
-  "vocab_size": 152064,
-  "rope_scaling_factor": 1.0,
-  "rope_beta": 10000.0,
-  "rope_scaling_type": "dynamic",
-  "embedding_type": "default",
-  "batch_size": 1,
-  "max_input_ids_length": 4000,
-  "tokenizer_name": "./tokenizer/",
+  "block_size": "${model.length}",
+  "checkpointing": {
+    "resume_ckpt_path": "${.save_dir}/checkpoints/last.ckpt",
+    "resume_from_ckpt": true,
+    "save_dir": "${cwd:}"
+  },
+  "data": {
+    "output_dir": "./data/pt/huggingface/datasets",
+    "train": "./dataset/da"
+  },
   "data_path": "./dataset/da",
+  "diffusion": "absorbing_state",
+  "dropout": 0.0,
+  "embedding_type": "default",
+  "eval": {
+    "checkpoint_path": "${cwd:}/checkpoints/last.ckpt",
+    "compute_perplexity_on_sanity": false,
+    "disable_ema": false,
+    "gen_ppl_eval_model_name_or_path": "gpt2-large",
+    "generate_samples": false,
+    "perplexity_batch_size": 8
+  },
+  "hidden_dim": 2048,
+  "hydra": {
+    "job": {
+      "chdir": true
+    },
+    "run": {
+      "dir": "./"
+    }
+  },
+  "intermediate_size": 1024,
+  "loader": {
+    "batch_size": "${div_up:${.global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}",
+    "eval_batch_size": "${div_up:${.eval_global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}",
+    "eval_global_batch_size": "${.global_batch_size}",
+    "global_batch_size": 512,
+    "num_workers": "${eval:\"len(__import__('os').sched_getaffinity(0))\"}",
+    "pin_memory": true
+  },
+  "max_input_ids_length": 4000,
+  "max_seq_len": 512,
+  "mode": "train",
+  "model": {
+    "custom_model_load_path": "./model/",
+    "length": 512,
+    "save_dir": "./model"
+  },
+  "model_type": "autodiffusion",
+  "multiple_of": 32,
+  "n_layers": 8,
+  "num_attention_heads": 16,
+  "optim": {
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "eps": "1e-8",
+    "lr": "3e-4",
+    "weight_decay": 0
+  },
+  "rope_beta": 10000.0,
+  "rope_scaling_factor": 1.0,
+  "rope_scaling_type": "dynamic",
+  "sampling": {
+    "first_hitting": true,
+    "kv_cache": false,
+    "logdir": "./samples_${algo.name}_len${model.length}_blocksize${block_size}",
+    "noise_removal": false,
+    "nucleus_p": 1.0,
+    "num_sample_batches": 1,
+    "var_length": false
+  },
+  "seed": 42,
+  "tokenizer_name": "bert-base-uncased",
+  "torch_dtype": "float32",
   "train": {
-    "epochs": 1,
-    "steps_per_epoch": 1,
-    "learning_rate": "1e-4",
-    "learning_rate_decay": 0.0,
-    "warmup_steps": 1000,
-    "weight_decay": 0.0,
     "adam_beta1": 0.9,
     "adam_beta2": 0.95,
     "adam_epsilon": "1e-8",
-    "gradient_accumulation_steps": 1,
-    "max_grad_norm": 1.0,
-    "seed": 42,
+    "epochs": 1,
     "fp16": false,
     "fp16_opt_level": "O1",
+    "gradient_accumulation_steps": 1,
     "gradient_checkpointing": false,
-    "gradient_checkpointing_kwargs": {}
+    "gradient_checkpointing_kwargs": {},
+    "learning_rate": "1e-4",
+    "learning_rate_decay": 0.0,
+    "max_grad_norm": 1.0,
+    "seed": 42,
+    "steps_per_epoch": 1,
+    "warmup_steps": 1000,
+    "weight_decay": 0.0
+  },
+  "training": {
+    "adam_beta1": 0.9,
+    "adam_beta2": 0.95,
+    "adam_epsilon": "1e-8",
+    "epochs": 1,
+    "final_path": "./checkpoints/last.ckpt/final_model",
+    "fp16": false,
+    "fp16_opt_level": "O1",
+    "gradient_accumulation_steps": 1,
+    "gradient_checkpointing": false,
+    "gradient_checkpointing_kwargs": {},
+    "learning_rate": "1e-4",
+    "learning_rate_decay": 0.0,
+    "max_grad_norm": 1.0,
+    "output_path": "./checkpoints/last.ckpt",
+    "seed": 42,
+    "steps_per_epoch": 1,
+    "warmup_steps": 1000,
+    "weight_decay": 0.0
+  },
+  "transformers_version": "4.51.3",
+  "vocab_size": 30522,
+  "wandb": {
+    "group": null,
+    "job_type": null,
+    "name": null,
+    "notes": "Block Denoising Discrete Diffusion Language Models",
+    "project": "BD3-LMs"
   }
 }

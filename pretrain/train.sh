@@ -13,4 +13,7 @@
 #SBATCH --open-mode=append            # Do not overwrite logs
 #SBATCH --requeue                     # Requeue upon preemption
 
-python -u train.py
+
+export TORCH_DISTRIBUTED_DEBUG=INFO
+export HYDRA_FULL_ERROR=1
+accelerate launch --config_file ./pretrain/acc_config.yaml pretrain/train.py
