@@ -27,7 +27,7 @@ from transformers.trainer_utils import get_last_checkpoint
 from transformers.trainer import TRAINER_STATE_NAME
 from rich import traceback
 from typing import Dict, Tuple, Union
-from pretrain import MyDecoderOnlyModel, CustomConfig
+from pretrain import ComplexFormerModel, CustomConfig
 import logging
 import wandb
 from omegaconf import OmegaConf
@@ -38,13 +38,14 @@ from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import DistributedType
 import numpy as np
 from datasets import DatasetDict,load_from_disk
+from dataset import count_token
 
 logger: logging.Logger = logging.getLogger(__name__)
 logger.propagate = False
-logger.addHandler(logging.FileHandler("logs/train.log"))
+logger.addHandler(logging.FileHandler("./logs/train_eval.log"))
 traceback.install()
 
-os.environ["WANDB_LOG_MODEL"] = "checkpoint"
+os.environ["WANDB_LOG_MODEL"] = "false"
 
 @hydra.main(
     config_path=".",
@@ -54,7 +55,7 @@ os.environ["WANDB_LOG_MODEL"] = "checkpoint"
 def main(config):
     tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name, trust_remote_code=True, cache_dir=config.tokenizer_cache, local_files_only=True)
     AutoConfig.register("autodiffusion", CustomConfig)
-    AutoModel.register(CustomConfig, MyDecoderOnlyModel)
+    AutoModel.register(CustomConfig,ComplexFormerModel )
 
     # Load the custom model
     customConfig = AutoConfig.from_pretrained(config.model.save_dir, trust_remote_code=True)
@@ -90,6 +91,8 @@ def main(config):
 
         model = model.to(accelerator.device)
 
+        
+
         class SelfTrainer(Trainer):
             def __init__(self, *args, debug: bool = False, **kwargs):
                 super().__init__(*args, **kwargs)
@@ -121,13 +124,13 @@ def main(config):
                 if not self.debug:
                     logger.setLevel(logging.WARNING)
 
-            def _save_checkpoint(self, model, trial, metrics=None):
-                output_dir = os.path.join(self.args.output_dir, f"checkpoint-{self.state.global_step}")
-                accelerator.save_state(output_dir)
-                if accelerator.is_main_process:
-                    self.tokenizer.save_pretrained(output_dir)
-                    self.state.save_to_json(os.path.join(output_dir, TRAINER_STATE_NAME))
-                    logger.info(f"Tokenizer and state saved to {output_dir}")
+            # def _save_checkpoint(self, model, trial, metrics=None):
+            #     output_dir = os.path.join(self.args.output_dir, f"checkpoint-{self.state.global_step}")
+            #     accelerator.save_state(output_dir)
+            #     if accelerator.is_main_process:
+            #         self.tokenizer.save_pretrained(output_dir)
+            #         self.state.save_to_json(os.path.join(output_dir, TRAINER_STATE_NAME))
+            #         logger.warning(f"ckpt  saved to {output_dir}")
 
         # Load Dataset
         logger.info(f"Loading preprocessed dataset from {config.data.output_dir}...")
@@ -135,6 +138,7 @@ def main(config):
         logger.info(f"Loaded dataset with {len(preprocessed_dataset)} {preprocessed_dataset.keys()} examples.")
         split_dataset = preprocessed_dataset['train'].train_test_split(test_size=0.1, seed=42)
         train_dataset = split_dataset["train"]
+        #count_token(config,train_dataset)
         eval_dataset = split_dataset["test"]
         logger.info(f"Training dataset size: {len(train_dataset)}")
         logger.info(f"Validation dataset size: {len(eval_dataset)}")
@@ -200,6 +204,7 @@ def main(config):
             metric_for_best_model="eval_loss",
             greater_is_better=False,
             run_name=config.wandb.name,
+            max_grad_norm=config.training.max_grad_norm,
         )
 
         callbacks_list = [
@@ -252,13 +257,18 @@ def main(config):
             logger.error(f"An error occurred during training: {e}")
             import traceback
             traceback.print_exc()
-            logger.error("Attempting to save accelerator state due to error...")
-            trainer._save_checkpoint(model, trial=None, metrics=None)
-            accelerator.save_state(training_args.output_dir + "/error_state")
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                logger.error("Saving accelerator state due to error...==========")
+                trainer._save_checkpoint(model, trial=None)
+                logger.error("Accelerator state saved due to error...==========")
         finally:
-            logger.error("Attempting to save accelerator state due to error...")
-            trainer._save_checkpoint(model, trial=None, metrics=None)
-            accelerator.save_state(training_args.output_dir + "/error_state")
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                logger.error("Attempting to save accelerator state due to error...")
+                logger.error("Saving accelerator state due to error...==========")
+                trainer._save_checkpoint(model, trial=None)
+                logger.error("Accelerator state saved due to error...==========")
 
 
         if accelerator.is_main_process:
@@ -267,30 +277,49 @@ def main(config):
     elif config.mode == "sample":
         device = ('cuda' if torch.cuda.is_available() else 'cpu')
         @torch.no_grad()
+        #TODO:
         def _inference(config):
             model = AutoModel.from_pretrained(
                 config.training.final_path,
                 config=customConfig,
                 trust_remote_code=True,
                 local_files_only=True,
-            ).eval().to(accelerator.device)
+            ).eval().to(device)
             tokenizer.padding_side = "left" # Important for generation
 
-            input_text = "Please tell me some information about China "
-            inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=config.max_seq_len).to(accelerator.device)
+            model.to(torch.bfloat16)
+
+            input_text = "Please tell me some information about China \n"
+            inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=config.max_seq_len).to(device)
+            #tokenizer.apply_chat_template(inputs)
             input_ids: Tensor = inputs.input_ids
             attention_mask: Tensor = inputs.attention_mask
-            print(f"Input IDs: {input_ids.shape}")
+            logger.warning(f"attention IDs: {attention_mask.shape}")
             print(input_text, end="", flush=True)
             #genereate
-            output = model(**inputs)
-            logits = output
-            for _ in range(config.max_seq_len - input_ids.shape[1]):
-                next_token_id = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(0)
-                input_ids = torch.cat([input_ids, next_token_id], dim=1)
-                inputs_ids = tokenizer.decode(next_token_id[0], skip_special_tokens=True)
-                print(inputs_ids, end=" ", flush=True)
-                output = model(input_ids,attention_mask=attention_mask)
+            generated_inputids = model.generate(input_ids,attention_mask,max_length = config.max_seq_len)
+            print("Answer is", tokenizer.batch_decode(generated_inputids,skip_special_tokens=True))
+            # output = model(**inputs)
+            # logits = output
+            
+            # for _ in range(config.max_seq_len - input_ids.shape[1]):
+            #     outputs = model(input_ids, attention_mask=attention_mask)
+            #     logits = outputs.logits if hasattr(outputs, 'logits') else outputs # Handle different model outputs
+            #     next_token_id = torch.argmax(logits[:, -1, :], dim=-1).unsqueeze(0)
+
+            #     # Gather next token IDs from all processes
+            #     #gathered_next_token_ids = accelerator.gather(next_token_id)
+
+            #     # Only the main process appends the token and prints
+                
+            #     input_ids = torch.cat([input_ids, next_token_id], dim=1)
+            #     logger.warning(input_ids)
+            #     next_token = tokenizer.decode(next_token_id[0], skip_special_tokens=True)
+            #     print(next_token, end=" ", flush=True)
+                
+            #     attention_mask = torch.cat([attention_mask, torch.ones((attention_mask.shape[0], 1), dtype=attention_mask.dtype, device=attention_mask.device)], dim=-1)
+                #print(inputs_ids, end=" ", flush=True)
+                #output = model(input_ids,attention_mask=attention_mask)
         _inference(config)
     elif config.mode == "ppl_eval":
         pass

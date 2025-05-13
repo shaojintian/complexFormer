@@ -1,13 +1,13 @@
 
-mode: train  # train / ppl_eval / sample
+mode: train   # train / ppl_eval / sample
 # model 根据需要更改 
 architecture: 'AutoDiffusionLM'  # AutoDiffusionLM / DiffusionLM
-max_seq_len : 512
-hidden_dim : 512
+max_seq_len : 32
+hidden_dim : 32
 n_layers : 8
 num_attention_heads : 8
 multiple_of : 32
-dropout : 0.0 # for pretraining 0 is good, for finetuning try 0.1+
+dropout : 0.1 # for pretraining 0 is good, for finetuning try 0.1+
 bias : False # do we use bias inside LayerNorm and Linear layers?
 intermediate_size : 512
 vocab_size: 250002
@@ -21,7 +21,7 @@ tokenizer_name: 'FacebookAI/xlm-roberta-base'
 tokenizer_cache: './tokenizer/cache/FacebookAI/xlm-roberta-base'
 data_path: './dataset/da'
 debug: False
-complex_attention: False
+complex_attention: True 
 flash_attn: False
 n_kv_heads: 8
 
@@ -100,8 +100,8 @@ training:
   gradient_checkpointing: False
   gradient_checkpointing_kwargs: {}
   output_path: ./checkpoints/last.ckpt
-  final_path: ./checkpoints/last.ckpt/final_model
-  #final_path: ./model #-------------------------------
+  #final_path: ./checkpoints/last.ckpt/checkpoint-2100
+  final_path: ./model #-------------------------------
   log_step: 100
   debug: False
   batch_size: 8
@@ -109,11 +109,11 @@ training:
   bf16: True
   fp16: False
   save_steps: 300
-  save_total_limit: 1
+  save_total_limit: 3
   early_stopping_patience: 3
 
 eval:
-  checkpoint_path: ./checkpoints/last.ckpt  # Used to evaluate a checkpoint after training.
+  checkpoint_path: ./checkpoints/last.ckpt/final_model  # Used to evaluate a checkpoint after training.
   disable_ema: False
   perplexity_batch_size: 8
   compute_perplexity_on_sanity: False
@@ -143,8 +143,8 @@ optim:
 #   val_check_interval: 10_000
 
 wandb:
-  project: autodiffusion
-  notes: Block Denoising Discrete Diffusion Language Models
+  project: complexformer
+  notes: complexformer
   group: null
   job_type: null
   name: train_eval_vinilla
@@ -176,7 +176,10 @@ model:
   length: 512
   custom_model_load_path: ./model/
 
-  
+
+tokenizer:
+  cache: ./tokenizer/cache
+
 deepspeed:
   zero_stage: 2 # 或 3，根据你的需求调整
   offload_optimizer:

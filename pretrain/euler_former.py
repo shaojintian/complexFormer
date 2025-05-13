@@ -30,22 +30,11 @@ from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutpu
 from transformers.modeling_utils import PreTrainedModel
 from transformers.utils import add_start_docstrings, add_start_docstrings_to_model_forward, logging, replace_return_docstrings
 from transformers.models.llama.configuration_llama import LlamaConfig
-from attention import ComplexMultiHeadAttentionV2
-import hydra 
-import argparse
-from torch import Tensor
-from typing import Optional, Dict, Any
-from rich import traceback
-from transformers import PreTrainedModel, PretrainedConfig, AutoConfig, AutoModel,GenerationMixin
-from utils import load_config
 
-traceback.install(show_locals=True)
 
 logger = logging.get_logger(__name__)
-logger.addHandler(logging.FileHandler("logs/llama2.log"))
 
 _CONFIG_FOR_DOC = "LlamaConfig"
-
 
 
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
@@ -186,7 +175,6 @@ class LlamaAttention(nn.Module):
         self.q_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.k_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
         self.v_proj = nn.Linear(self.hidden_size, self.num_heads * self.head_dim, bias=False)
-        self.o_proj = nn.Linear(self.num_heads * self.head_dim, self.hidden_size, bias=False)
         self.rotary_emb = LlamaRotaryEmbedding(self.head_dim)
         self.delta = nn.Parameter(torch.zeros(1, 1, 1, self.head_dim // 2))
         self.bias = nn.Parameter(torch.zeros(1, 1, 1, self.head_dim // 2))
@@ -269,7 +257,6 @@ class LlamaDecoderLayer(nn.Module):
     def __init__(self, config: LlamaConfig):
         super().__init__()
         self.hidden_size = config.hidden_size
-        #self.self_attn = ComplexMultiHeadAttentionV2(self.config.hidden_dim, self.config.num_attention_heads)
         self.self_attn = LlamaAttention(config=config)
         self.mlp = LlamaMLP(
             hidden_size=self.hidden_size,
@@ -623,7 +610,7 @@ class LlamaModel(LlamaPreTrainedModel):
         )
 
 
-class LlamaForCausalLM(LlamaPreTrainedModel,GenerationMixin):
+class LlamaForCausalLM(LlamaPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.model = LlamaModel(config)
@@ -898,50 +885,3 @@ class LlamaForSequenceClassification(LlamaPreTrainedModel):
             hidden_states=transformer_outputs.hidden_states,
             attentions=transformer_outputs.attentions,
         )
-        
-
-@hydra.main(config_path='.', config_name="config.yaml")
-def main(config: Dict[str, Any]) -> None:
-    argparser = argparse.ArgumentParser()
-    argparser.add_argument('--config', type=str, default='./pretrain/config.yaml', help='Path to the config file')
-    args = argparser.parse_args()
-    
-
-    device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
-    #deepspeed config
-
-    model: LlamaForCausalLM = LlamaForCausalLM(config=load_config(args.config)).to(device)
-    model._set_gradient_checkpointing(model, True)
-    test_model(model,config)
-
-    model.save_pretrained(config.model.save_dir)
-    logger.info(f"Model saved to {config.model.save_dir}")
-
-     # --- Calculate Parameters ---
-    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad) # Count only trainable
-    logger.warning(f"Trainable model parameters: {num_params/1e9:,}B")
-
-
-def test_model(model: LlamaForCausalLM,config) -> None:
-    device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    logger.info(f"Testing model...{device}")
-
-    input_ids: Tensor = torch.randint(0, config.vocab_size, (config.batch_size, config.max_seq_len)).to(device)
-    attention_mask: Tensor = torch.ones((config.max_seq_len, config.hidden_dim )).bool().to(device) #[seqlen,hidden_dim]
-    labels: Tensor = torch.randint(0, config.vocab_size, (config.batch_size, config.max_seq_len)).to(device)
-    output = model(input_ids, attention_mask=attention_mask, labels=labels)
-    logits = output.logits
-    logger.info(f"Model output shape: {logits.shape}")
-    assert logits.shape == (config.batch_size, config.max_seq_len, config.vocab_size), "Output shape mismatch"
-
-    # 使用损失函数
-    criterion = nn.CrossEntropyLoss()
-    loss = criterion(logits.view(-1, config.vocab_size), labels.view(-1))  # 确保形状匹配
-    logger.info(f"Loss: {loss.dim()}")
-
-if __name__ == '__main__':
-    main()
-
-
-

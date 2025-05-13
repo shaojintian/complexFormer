@@ -18,7 +18,7 @@ from accelerate.utils import DistributedType
 import os
 #from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
 
-traceback.install(show_locals=True)
+#traceback.install(show_locals=True)
 
 logger: logging.Logger = logging.getLogger(__name__)
 logger.propagate = False
@@ -48,7 +48,7 @@ class CustomConfig(PretrainedConfig):
         self.debug : bool = kwargs.get("debug", False)
 
 
-class MyDecoderOnlyModel(PreTrainedModel):
+class ComplexFormerModel(PreTrainedModel):
     config_class = CustomConfig
     #
 
@@ -122,7 +122,7 @@ class MyDecoderOnlyModel(PreTrainedModel):
                         return module(inputs[0], padding_mask=captured_key_padding_mask)
                     return custom_forward
 
-                captured_key_padding_mask = ~attention_mask # 捕获当前的 mask
+                captured_key_padding_mask = attention_mask # 捕获当前的 mask
                 layer_outputs = checkpoint.checkpoint(
                     create_custom_forward(block), # 包装后的函数
                     x,                          # 只有 x (需要梯度) 直接传入
@@ -132,13 +132,13 @@ class MyDecoderOnlyModel(PreTrainedModel):
                 x = layer_outputs
                 logger.info(f"Transformer block output shape with ckpt: {x.shape}")
             else:
-                x = block(x, padding_mask=~attention_mask)
+                x = block(x, padding_mask=attention_mask)
                 logger.info(f"Transformer block output shape no ckpt: {x.shape}")
         logger.info(f"Transformer block output shape: {x.shape}")
         x = self.linear(x)
         logger.info(f"Linear layer output shape: {x.shape}")
-        x = self.softmax(x)
-        logger.info(f"Softmax output shape: {x.shape}")
+        # x = self.softmax(x)
+        # logger.info(f"Softmax output shape: {x.shape}") #gradient loss
        # assert x.shape == (self.config.batch_size, self.config.max_seq_len, self.config.vocab_size), f"Output shape mismatch{self.config.batch_size},{self.config.max_seq_len}, {self.config.vocab_size} is  {x.shape}"
         return x
 
@@ -165,6 +165,117 @@ class MyDecoderOnlyModel(PreTrainedModel):
     def _togger_loger(self):
         if self.debug == False:
             logger.setLevel(logging.WARNING)
+            
+    @torch.no_grad()
+    def generate(self,
+        input_ids: Tensor, # (batch_size, prompt_seq_len)
+        attention_mask: Optional[Tensor] = None, # (batch_size, prompt_seq_len)
+        max_length: int = 100,
+        temperature: float = 1.0,
+        top_k: int = 0, # 0 means no top-k filtering
+        top_p: float = 1.0, # 1.0 means no top-p filtering
+        repetition_penalty: float = 1.0,
+        eos_token_id: Optional[int] = None,
+        pad_token_id: Optional[int] = None,
+        use_cache: bool = True,
+        **kwargs):
+        
+        self.eval() # Set model to evaluation mode
+        if pad_token_id is None and self.config.pad_token_id is not None:
+            pad_token_id = self.config.pad_token_id
+        if eos_token_id is None and self.config.eos_token_id is not None:
+            eos_token_id = self.config.eos_token_id
+        
+        batch_size, cur_len = input_ids.shape
+        
+        if attention_mask is None:
+            attention_mask = torch.ones_like(input_ids)
+
+        # Keep track of whether we are using EOS
+        model_kwargs = {"attention_mask": attention_mask, **kwargs}
+        
+        # `generated_ids` will store the complete sequence (prompt + generated)
+        # Initialize with input_ids, ensuring it's on the correct device and not part of graph
+        generated_ids = input_ids.clone().detach()
+        
+        # `past_key_values` for KV caching
+        past_key_values = None
+
+        for _ in range(max_length - cur_len): # Generate up to max_length - prompt_length new tokens
+            # Prepare model inputs
+            model_inputs = {"input_ids":generated_ids,"attention_mask":attention_mask}
+            
+            # Forward pass to get logits
+            outputs = self(
+                **model_inputs,
+                # use_cache=use_cache # Already passed via model_inputs
+            )
+            logits = outputs
+            next_token_logits = logits[:, -1, :] # Get logits for the last token: (batch_size, vocab_size)
+
+            # Apply repetition penalty
+            if repetition_penalty != 1.0:
+                for i in range(batch_size):
+                    for token_id in set(generated_ids[i].tolist()):
+                        next_token_logits[i, token_id] /= repetition_penalty
+            
+            # Apply temperature
+            if temperature != 1.0:
+                next_token_logits = next_token_logits / temperature
+
+            # Apply top-k filtering
+            if top_k > 0:
+                top_k_values, top_k_indices = torch.topk(next_token_logits, top_k, dim=-1)
+                # Create a mask for elements not in top-k
+                top_k_mask = torch.ones_like(next_token_logits, dtype=torch.bool).scatter_(-1, top_k_indices, False)
+                next_token_logits.masked_fill_(top_k_mask, float('-inf'))
+
+            # Apply top-p (nucleus) filtering
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True, dim=-1)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                
+                # Remove tokens with cumulative probability above the threshold
+                sorted_indices_to_remove = cumulative_probs > top_p
+                # Shift the mask: keep the first token above threshold
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0 # Never remove the most probable token
+                
+                # Scatter back to original order
+                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                next_token_logits.masked_fill_(indices_to_remove, float('-inf'))
+
+            # Sample next token
+            probs = F.softmax(next_token_logits, dim=-1)
+            next_token_id = torch.multinomial(probs, num_samples=1) # (batch_size, 1)
+
+            # Append the new token
+            generated_ids = torch.cat([generated_ids, next_token_id], dim=-1)
+            
+            # Update attention_mask if it's not None
+            if attention_mask is not None:
+                attention_mask = torch.cat(
+                    [attention_mask, attention_mask.new_ones((batch_size, 1))], dim=-1
+                )
+                model_kwargs["attention_mask"] = attention_mask
+
+
+            # # Update past_key_values
+            # if use_cache:
+            #     past_key_values = outputs.past_key_values
+                
+            # Check for EOS token
+            if eos_token_id is not None and (next_token_id == eos_token_id).all():
+                logger.info("EOS token generated for all sequences in batch.")
+                break
+            
+            # Check if current length exceeds max_length (should be handled by loop, but good for sanity)
+            if generated_ids.shape[1] >= max_length:
+                break
+                
+        return generated_ids
+
+        
 class FFN(nn.Module):
     def __init__(self, config: CustomConfig):
         super().__init__()
@@ -174,10 +285,30 @@ class FFN(nn.Module):
         self.activation: nn.Module = nn.SiLU()  # or any other activation function
 
     def forward(self, x: Tensor) -> Tensor:
-        x = self.linear1(x) * self.activation(self.linear2(x))
-        x = self.linear3(x)
+        gate = self.linear1(x)  # 输出通常是 float32 (如果 x 是 float32)
+        up = self.linear2(x)    # 输出通常是 float32 (如果 x 是 float32)
+
+        # 应用激活函数
+        activated_up = self.activation(up) # 输出通常是 float32
+
+        # 在乘法之前，可以将激活转换为 bfloat16
+        # 注意：如果 gate 也是 float32，torch 会自动进行类型提升，结果可能是 float32
+        # 为了确保乘法在 bfloat16 下进行（如果这是目标），两者都应转换
+        # 或者至少乘法的一个操作数是 bfloat16，另一个会被提升或保持
+        
+        # 明确的类型转换 (推荐)
+        if gate.dtype == torch.float32: # 仅当输入是 float32 时转换，避免不必要的转换
+            gate_bf16 = gate.to(torch.bfloat16)
+            activated_up_bf16 = activated_up.to(torch.bfloat16)
+            intermediate = gate_bf16 * activated_up_bf16
+            x = self.linear3(intermediate.to(torch.float32))
+        else: # 如果输入已经是 bfloat16，则直接计算
+            intermediate = gate * activated_up
+            x = self.linear3(intermediate)
+        
         return x
 
+    
 
 class PositionalEncoding(nn.Module):
     """
@@ -232,9 +363,9 @@ class RMSNorm(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, config: CustomConfig):
         super().__init__()
-        self.attention: nn.MultiheadAttention = nn.MultiheadAttention(
+        self.attention = nn.MultiheadAttention(
             config.hidden_dim, config.num_attention_heads, dropout=config.dropout, batch_first=True
-        )
+        ) if config.complex_attention == False else ComplexMultiHeadAttentionV2(config.hidden_dim, config.num_attention_heads)
         self.ffn: FFN = FFN(config)
         self.rmsnorm: RMSNorm = RMSNorm(config.hidden_dim)
         self.config: CustomConfig = config
@@ -245,69 +376,28 @@ class TransformerBlock(nn.Module):
         seq_len: int = x.shape[1]
         causal_mask: Tensor = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(x.device)
         
-
-        def atten_forward(x: Tensor) -> Tensor:
-            return self.attention(x, x, x, attn_mask=causal_mask)[0]
         
         if self.config.complex_attention:
-            atten_forward = ComplexMultiHeadAttentionV2(self.config.hidden_dim, self.config.num_attention_heads).to(x.device)
-            x = atten_forward(x, x, x, mask=padding_mask)
+            logger.info('using complex attention')
+            x = self.attention(x, x, x, mask=padding_mask)
         else:
             #TODO
-            logger.warning(f'before forward{x.dtype}')
+            def atten_forward(x: Tensor) -> Tensor:
+                return self.attention(x, x, x, attn_mask=causal_mask)[0]
+            logger.info(f'before forward{x.dtype}')
             x = atten_forward(x.bfloat16())
-            logger.warning(f'after forward{x.dtype}')
-        x = self.rmsnorm(x + residual).to(torch.bfloat16)
-        logger.warning(f"TransformerBlock after rmsnorm shape: {x.shape}")
+            logger.info(f'after forward{x.dtype}')
+        x = self.rmsnorm(x + residual)
+        logger.info(f"TransformerBlock after rmsnorm shape: {x.shape}")
 
-        residual = x.bfloat16()
-        x = self.ffn(x.bfloat16())
-        x = self.rmsnorm(x + residual).to(torch.bfloat16)   
+        if torch.isnan(x).any():
+            logger.info(f"TransformerBlock after rmsnorm has nan")
+            raise ValueError("TransformerBlock after rmsnorm has nan")
+        residual = x
+        x = self.ffn(x)
+        x = self.rmsnorm(x + residual)
         return x
 
-
-class MlutiLatentAtten(nn.Module):
-    def __init__(self, config: CustomConfig, use_cache: bool = True, dropout: float = 0.01):
-        super().__init__()
-        self.config: CustomConfig = config
-        assert config.hidden_dim % config.num_attention_heads == 0, "hidden_dim must be divisible by num_attention_heads"
-        self.q_proj: nn.Linear = nn.Linear(config.hidden_dim, config.hidden_dim)
-        self.k_proj: nn.Linear = nn.Linear(config.hidden_dim, config.hidden_dim)
-        self.v_proj: nn.Linear = nn.Linear(config.hidden_dim, config.hidden_dim)
-        self.out_proj: nn.Linear = nn.Linear(config.hidden_dim, config.hidden_dim)
-
-        self.embed_dim: float = config.hidden_dim / config.num_attention_heads
-        self.softmax: nn.Softmax = nn.Softmax(dim=-1)
-
-        self.use_cache: bool = use_cache
-        self.k_cache: nn.Parameter = nn.Parameter(torch.zeros(config.num_attention_heads, config.hidden_dim), requires_grad=False)
-        self.v_cache: nn.Parameter = nn.Parameter(torch.zeros(config.num_attention_heads, config.hidden_dim), requires_grad=False)
-
-    def forward(self, x: Tensor, attention_mask: Tensor) -> Tensor:
-        batch_size, seq_len, hidden_dim = x.size()
-        q: Tensor = self.q_proj(x).view(batch_size, seq_len, self.config.num_attention_heads, self.embed_dim).transpose(1, 2)
-        k: Tensor = self.k_proj(x).view(batch_size, seq_len, self.config.num_attention_heads, self.embed_dim).transpose(1, 2)
-        v: Tensor = self.v_proj(x).view(batch_size, seq_len, self.config.num_attention_heads, self.embed_dim).transpose(1, 2)
-
-        from rotary_embedding_torch import RotaryEmbedding
-        rope = RotaryEmbedding(dim=self.embed_dim, base=10000)
-        q = rope(q, seq_len=seq_len)
-        k = rope(k, seq_len=seq_len)
-
-        if self.use_cache:
-            k = torch.cat([self.k_cache, k], dim=1)
-            v = torch.cat([self.v_cache, v], dim=1)
-            self.k_cache = k
-            self.v_cache = v
-
-        scale: Tensor = torch.sqrt(torch.tensor(x.size(-1), dtype=torch.float32, device=x.device))
-        attn_weights: Tensor = self.softmax(torch.matmul(q, k.transpose(-2, -1)) / scale)
-        attn_weights = attn_weights * attention_mask
-
-        atten_output: Tensor = torch.matmul(attn_weights, v)
-        atten_output = atten_output.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_dim)
-        atten_output = self.out_proj(atten_output)
-        return atten_output
 
 
 
@@ -326,13 +416,13 @@ def main(config: Dict[str, Any]) -> None:
     args = argparser.parse_args()
 
     AutoConfig.register("autodiffusion", CustomConfig)
-    AutoModel.register(CustomConfig, MyDecoderOnlyModel)
+    AutoModel.register(CustomConfig, ComplexFormerModel)
 
     device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     #deepspeed config
 
-    model: MyDecoderOnlyModel = MyDecoderOnlyModel(config=load_config(args.config)).to(device)
+    model: ComplexFormerModel = ComplexFormerModel(config=load_config(args.config)).to(device)
     test_model(model,config)
 
     model.gradient_checkpointing_enable()
@@ -344,12 +434,13 @@ def main(config: Dict[str, Any]) -> None:
     logger.warning(f"Trainable model parameters: {num_params/1e9:,}B")
 
 
-def test_model(model: MyDecoderOnlyModel,config) -> None:
+@torch.no_grad()
+def test_model(model: ComplexFormerModel,config) -> None:
     device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logger.info(f"Testing model...{device}")
 
     input_ids: Tensor = torch.randint(0, config.vocab_size, (config.batch_size, config.max_seq_len)).to(device)
-    attention_mask: Tensor = torch.ones((config.max_seq_len, config.hidden_dim )).bool().to(device) #[seqlen,hidden_dim]
+    attention_mask: Tensor = torch.ones((config.batch_size, config.max_seq_len )).bool().to(device) #[seqlen,hidden_dim]
     labels: Tensor = torch.randint(0, config.vocab_size, (config.batch_size, config.max_seq_len)).to(device)
     output: Tensor = model(input_ids, attention_mask=attention_mask, labels=labels, use_checkpoint=True).to(device)
     logger.info(f"Model output shape: {output.shape}")
