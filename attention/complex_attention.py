@@ -213,7 +213,7 @@ class ComplexMultiHeadAttentionV2(nn.Module):
                                             magnitude_k,          # (B, H, KL, DK_half) - full K used
                                             cos_combined_phase_chunk # (B, H, chunk_QL, KL, DK_half)
                                             )
-            scores_chunks.append(scores_current_chunk)
+                scores_chunks.append(scores_current_chunk)
 
             if num_q_chunks == 1:
                 scores = scores_chunks[0]
@@ -256,7 +256,7 @@ class ComplexMultiHeadAttentionV2(nn.Module):
 
             # Concatenate heads and project
             # transpose back to (B, QL, H, DV) then reshape to (B, QL, H*DV = D_MODEL)
-            print(f"Before transpose: output.shape = {output.shape}, output.numel() = {output.numel()}")
+            #print(f"Before transpose: output.shape = {output.shape}, output.numel() = {output.numel()}")
             output = output.transpose(1, 2).contiguous().view(batch_size, query_len, self.d_model)
             output = self.W_o(output) # Final linear projection
 
