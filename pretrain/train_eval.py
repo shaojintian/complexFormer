@@ -34,7 +34,7 @@ from omegaconf import OmegaConf
 from transformers.integrations import WandbCallback
 from pretrain import test_model
 from torch import Tensor
-from accelerate import Accelerator, DeepSpeedPlugin
+from accelerate import Accelerator, DeepSpeedPlugin,DataLoaderConfiguration
 from accelerate.utils import DistributedType
 import numpy as np
 from datasets import DatasetDict,load_from_disk
@@ -54,7 +54,7 @@ os.environ["WANDB_LOG_MODEL"] = "false"
 )
 def main(config):
     tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name, trust_remote_code=True, cache_dir=config.tokenizer_cache, local_files_only=True)
-    AutoConfig.register("autodiffusion", CustomConfig)
+    AutoConfig.register(config.architecture, CustomConfig)
     AutoModel.register(CustomConfig,ComplexFormerModel )
 
     # Load the custom model
@@ -66,13 +66,15 @@ def main(config):
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
     )
 
+    dataloader_config = DataLoaderConfiguration(dispatch_batches=None, split_batches=False)
     # Initialize Accelerate with DeepSpeed plugin
     accelerator = Accelerator(
+        dataloader_config=dataloader_config,
         mixed_precision=config.training.mixed_precision,
         gradient_accumulation_steps=config.training.gradient_accumulation_steps,
         deepspeed_plugin=ds_plugin,
     )
-
+ 
     if config.mode == "train":
         
         model = AutoModel.from_pretrained(
@@ -196,7 +198,7 @@ def main(config):
             fp16=config.training.fp16,
             logging_strategy="steps",
             logging_steps=config.training.log_step,
-            eval_strategy="steps",
+            evaluation_strategy="steps",
             eval_steps=config.training.log_step,
             report_to="wandb" if accelerator.is_main_process else None,
             remove_unused_columns=False,
@@ -205,6 +207,7 @@ def main(config):
             greater_is_better=False,
             run_name=config.wandb.name,
             max_grad_norm=config.training.max_grad_norm,
+            deepspeed = config.deepspeed.config_path if config.deepspeed else None,
         )
 
         callbacks_list = [

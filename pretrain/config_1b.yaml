@@ -3,20 +3,20 @@ mode: train   # train / ppl_eval / sample
 # model 根据需要更改 
 architecture: 'ComplexFormer'  # AutoDiffusionLM / DiffusionLM
 max_seq_len : 1024
-hidden_dim : 512
+hidden_dim : 32
 n_layers : 8
 num_attention_heads : 8
 multiple_of : 32
 dropout : 0.1 # for pretraining 0 is good, for finetuning try 0.1+
 bias : False # do we use bias inside LayerNorm and Linear layers?
-intermediate_size : 512
+intermediate_size : 64
 vocab_size: 250002
 rope_scaling_factor: 1.0
 rope_beta: 10000.0
 rope_scaling_type: 'dynamic'
 embedding_type: 'default'  # default/Abacus
-batch_size: 2
-max_input_ids_length: 4000
+batch_size: 4
+max_input_ids_length: 1024
 tokenizer_name: 'FacebookAI/xlm-roberta-base' 
 tokenizer_cache: './tokenizer/cache/FacebookAI/xlm-roberta-base'
 data_path: './dataset/da'
@@ -181,7 +181,7 @@ tokenizer:
   cache: ./tokenizer/cache
 
 deepspeed:
-  zero_stage: 3 # 或 3，根据你的需求调整
+  zero_stage: 2 # 或 3，根据你的需求调整
   offload_optimizer:
     device: "cpu" # 或 "nvme"
     pin_memory: true
@@ -197,7 +197,7 @@ deepspeed:
     size: 8 # 张量并行大小 (等于卡数)
   kernel_injection:
     enable: true # 启用内核注入优化
-  config_path: ./pretrain/zero3.json # DeepSpeed 配置文件路径
+  config_path: ./pretrain/acc_config.yaml # DeepSpeed 配置文件路径
 
 
 image:

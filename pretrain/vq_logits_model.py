@@ -26,7 +26,7 @@ logger.addHandler(logging.FileHandler("logs/model.log"))
 
 
 class CustomConfig(PretrainedConfig):
-    model_type: str = "ComplexFormer"
+    model_type: str = "autodiffusion"
 
     def __init__(self,
                  vocab_size: int = 30522,
@@ -59,7 +59,7 @@ class ComplexFormerModel(PreTrainedModel):
         self.pos_embedding = PositionalEncoding(config.hidden_dim, config.max_seq_len, device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
         self.head_dim = config.hidden_dim // config.num_attention_heads
         self.transformer_blocks: nn.ModuleList = nn.ModuleList(
-            [TransformerBlock(config) for _ in range(config.n_layers)]  # type: ignore
+            [TransformerBlock(config)]
         )
         self.linear: nn.Linear = nn.Linear(config.hidden_dim, config.vocab_size)
         self.softmax: nn.Softmax = nn.Softmax(dim=-1)
@@ -310,8 +310,6 @@ class FFN(nn.Module):
 
     
 
-
-
 class PositionalEncoding(nn.Module):
     """
     compute sinusoid encoding.
@@ -365,14 +363,15 @@ class RMSNorm(nn.Module):
 class TransformerBlock(nn.Module):
     def __init__(self, config: CustomConfig):
         super().__init__()
-        self.attention = ComplexMultiHeadAttentionV2(config.hidden_dim, config.num_attention_heads)
+        self.attention = nn.MultiheadAttention(
+            config.hidden_dim, config.num_attention_heads, dropout=config.dropout, batch_first=True
+        ) if config.complex_attention == False else ComplexMultiHeadAttentionV2(config.hidden_dim, config.num_attention_heads)
         self.ffn: FFN = FFN(config)
         self.rmsnorm: RMSNorm = RMSNorm(config.hidden_dim)
         self.config: CustomConfig = config
 
     def forward(self, x: Tensor, padding_mask: Tensor) -> Tensor:
         residual: Tensor = x
-        x = self.rmsnorm(x)
         logger.info(f"TransformerBlock Input shape: {x.shape}")
         seq_len: int = x.shape[1]
         causal_mask: Tensor = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(x.device)
@@ -396,6 +395,7 @@ class TransformerBlock(nn.Module):
             raise ValueError("TransformerBlock after rmsnorm has nan")
         residual = x
         x = self.ffn(x)
+        x = self.rmsnorm(x + residual)
         return x
 
 
@@ -415,7 +415,7 @@ def main(config: Dict[str, Any]) -> None:
     argparser.add_argument('--config', type=str, default='./pretrain/config.yaml', help='Path to the config file')
     args = argparser.parse_args()
 
-    AutoConfig.register(config.architecture, CustomConfig)
+    AutoConfig.register("autodiffusion", CustomConfig)
     AutoModel.register(CustomConfig, ComplexFormerModel)
 
     device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -423,9 +423,6 @@ def main(config: Dict[str, Any]) -> None:
     #deepspeed config
 
     model: ComplexFormerModel = ComplexFormerModel(config=load_config(args.config)).to(device)
-    
-
-    #
     test_model(model,config)
 
     model.gradient_checkpointing_enable()
@@ -433,52 +430,8 @@ def main(config: Dict[str, Any]) -> None:
     logger.info(f"Model saved to {config.model.save_dir}")
 
      # --- Calculate Parameters ---
-    num_params = sum(p.numel() for p in model.state_dict().values() if torch.is_tensor(p))
-    print(f"Trainable model parameters: {num_params/1e9:,}B")
-    print_model_parameters_llm(model)
-
-
-    # 2. 打印模型参数的函数
-def print_model_parameters_llm(model_to_inspect):
-    if not isinstance(model_to_inspect, (AutoModel, torch.nn.Module)): # 检查是否是预期类型
-        print("传入的不是一个有效的PyTorch模型。")
-        return
-
-    print(f"\n模型架构 (部分，如果太大):")
-    # 对于非常大的LLM，直接打印模型对象可能会输出非常多内容
-    # print(model_to_inspect)
-    # 可以只打印模型类型
-    print(type(model_to_inspect))
-
-
-    print("\n参数详情:")
-    print("---------------------------------------------------------------------------------------------------------------")
-    # 调整列宽以适应更长的参数名
-    print(f"{'Parameter Name':<70} | {'Shape':<25} | {'Numel':<12} | {'Requires Grad':<15} | {'Dtype':<10}")
-    print("---------------------------------------------------------------------------------------------------------------")
-
-    total_params = 0
-    trainable_params = 0
-
-    for name, param in model_to_inspect.named_parameters():
-        numel = param.numel()
-        total_params += numel
-        if param.requires_grad:
-            trainable_params += numel
-        
-        # 参数名可能非常长，如果需要可以截断显示
-        display_name = name
-        # if len(name) > 68:
-        # display_name = name[:65] + "..."
-
-        print(f"{display_name:<70} | {str(param.shape):<25} | {numel:<12,} | {str(param.requires_grad):<15} | {str(param.dtype).replace('torch.', ''):<10}")
-
-    print("---------------------------------------------------------------------------------------------------------------")
-    print(f"总参数量 (Total parameters): {total_params:,}")
-    print(f"可训练参数量 (Trainable parameters): {trainable_params:,}")
-    if total_params != trainable_params:
-        print(f"不可训练/冻结参数量 (Non-trainable parameters): {total_params - trainable_params:,}")
-    print("---------------------------------------------------------------------------------------------------------------")
+    num_params = sum(p.numel() for p in model.parameters() if p.requires_grad) # Count only trainable
+    logger.warning(f"Trainable model parameters: {num_params/1e9:,}B")
 
 
 @torch.no_grad()
@@ -493,7 +446,6 @@ def test_model(model: ComplexFormerModel,config) -> None:
     logger.info(f"Model output shape: {output.shape}")
     assert output.shape == (config.batch_size, config.max_seq_len, config.vocab_size), "Output shape mismatch"
 
-    
     # 使用损失函数
     criterion = nn.CrossEntropyLoss()
     loss = criterion(output.view(-1, config.vocab_size), labels.view(-1))  # 确保形状匹配
