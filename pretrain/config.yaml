@@ -15,8 +15,8 @@ rope_scaling_factor: 1.0
 rope_beta: 10000.0
 rope_scaling_type: 'dynamic'
 embedding_type: 'default'  # default/Abacus
-batch_size: 2
-max_input_ids_length: 4000
+batch_size: 4
+max_input_ids_length: 1024
 tokenizer_name: 'FacebookAI/xlm-roberta-base' 
 tokenizer_cache: './tokenizer/cache/FacebookAI/xlm-roberta-base'
 data_path: './dataset/da'
@@ -84,7 +84,7 @@ block_size: ${model.length}
 training:
   epochs: 1 #key for training
   steps_per_epoch: 100
-  learning_rate: 1e-4
+  learning_rate: 1e-5
   learning_rate_decay: 0.0
   warmup_steps: 1000
   warmup_ratio: 0.05
@@ -93,18 +93,18 @@ training:
   adam_beta2: 0.95
   adam_epsilon: 1e-8
   lr_scheduler_type: cosine
-  gradient_accumulation_steps: 8 #key 
+  gradient_accumulation_steps: 4 #key 
   max_grad_norm: 1.0
   seed: 42
   fp16_opt_level: 'O1'
   gradient_checkpointing: False
   gradient_checkpointing_kwargs: {}
   output_path: ./checkpoints/last.ckpt
-  #final_path: ./checkpoints/last.ckpt/checkpoint-1500
-  final_path: ./model #-------------------------------
+  final_path: ./checkpoints/last.ckpt/checkpoint-900  #for sample
+  #final_path: ./model #-------------------------------
   log_step: 100
   debug: False
-  batch_size: 8
+  batch_size: 2
   mixed_precision: bf16
   bf16: True
   fp16: False
@@ -165,7 +165,7 @@ checkpointing:
   save_dir: ./checkpoints
   # Note: `checkpoints` path should correspond to `checkpoint_every_n_steps.dirpath`
   resume_from_ckpt: true
-  resume_ckpt_path: ${.save_dir}/last.ckpt/error_state
+  resume_ckpt_path: ${.save_dir}/last.ckpt/
 
 data:
   train: "./dataset/da"
@@ -181,7 +181,7 @@ tokenizer:
   cache: ./tokenizer/cache
 
 deepspeed:
-  zero_stage: 3 # 或 3，根据你的需求调整
+  zero_stage: 2 # 或 3，根据你的需求调整
   offload_optimizer:
     device: "cpu" # 或 "nvme"
     pin_memory: true

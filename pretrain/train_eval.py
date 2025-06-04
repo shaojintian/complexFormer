@@ -45,7 +45,8 @@ logger.propagate = False
 logger.addHandler(logging.FileHandler("./logs/train_eval.log"))
 traceback.install()
 
-os.environ["WANDB_LOG_MODEL"] = "false"
+os.environ["WANDB_LOG_MODEL"] = "checkpoint"
+os.environ["WANDB_WATCH"] = "all"
 
 @hydra.main(
     config_path=".",
@@ -187,9 +188,9 @@ def main(config):
             warmup_ratio=config.training.warmup_ratio,
             lr_scheduler_type=config.training.lr_scheduler_type,
             num_train_epochs=config.training.epochs,
-            per_device_train_batch_size=config.training.batch_size,
+            per_device_train_batch_size=config.training.batch_size, #minimize
             per_device_eval_batch_size=config.training.batch_size,
-            gradient_accumulation_steps=config.training.gradient_accumulation_steps,
+            gradient_accumulation_steps=config.training.gradient_accumulation_steps, #maximize
             gradient_checkpointing=config.training.gradient_checkpointing,
             save_strategy="steps",
             save_steps=config.training.save_steps,
@@ -198,7 +199,7 @@ def main(config):
             fp16=config.training.fp16,
             logging_strategy="steps",
             logging_steps=config.training.log_step,
-            evaluation_strategy="steps",
+            eval_strategy="steps",
             eval_steps=config.training.log_step,
             report_to="wandb" if accelerator.is_main_process else None,
             remove_unused_columns=False,
@@ -282,6 +283,7 @@ def main(config):
         @torch.no_grad()
         #TODO:
         def _inference(config):
+            customConfig = AutoConfig.from_pretrained(config.training.final_path, trust_remote_code=True)
             model = AutoModel.from_pretrained(
                 config.training.final_path,
                 config=customConfig,

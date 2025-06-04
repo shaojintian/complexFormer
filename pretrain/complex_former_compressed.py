@@ -16,6 +16,7 @@ from attention import ComplexMultiHeadAttentionV2
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import DistributedType
 import os
+from .vq_logits_model import VQLogits
 #from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
 
 #traceback.install(show_locals=True)
@@ -61,18 +62,22 @@ class ComplexFormerModel(PreTrainedModel):
         self.transformer_blocks: nn.ModuleList = nn.ModuleList(
             [TransformerBlock(config) for _ in range(config.n_layers)]  # type: ignore
         )
-        self.linear: nn.Linear = nn.Linear(config.hidden_dim, config.vocab_size)
+        self.vq_logits: Optional[VQLogits] = None
+        if hasattr(config, 'vq_logits') and self.config.vq_logits:
+            self.vq_logits = VQLogits(config.hidden_dim, config.vocab_size, config.K_CODES, M_init_method="random")
+            logger.info("VQLogitsModel initialized.")
+        else:
+            self.linear: nn.Linear = nn.Linear(config.hidden_dim, config.vocab_size)
+            logger.info("VQLogitsModel not initialized.")
         self.softmax: nn.Softmax = nn.Softmax(dim=-1)
 
         #
         # 添加旋转位置编码
         self.rope = RotaryEmbedding(dim=self.head_dim)
-        self.rmsnorm = RMSNorm(config.hidden_dim)
         self.gradient_checkpointing = False
         self.debug = config.debug
         self._togger_loger()
         self.apply(self._init_weights)
-        
 
     def can_generate(self)-> bool:
         return True
@@ -90,7 +95,6 @@ class ComplexFormerModel(PreTrainedModel):
         logger.info(f"Input IDs shape: {input_ids.shape}")#[batch_size, seq_len]
         device = input_ids.device
         #logger.info(f"Input IDs shape: {input_ids.device}")
-        
 
         token_embeddings = self.embedding(input_ids).to(device)
         x: Tensor = token_embeddings 
@@ -108,7 +112,8 @@ class ComplexFormerModel(PreTrainedModel):
             #logger.info(f"Token Embeddings shape: {token_embeddings.shape}")
             logger.info(f"Position Embeddings shape: {position_embeddings.device}")
             x: Tensor = token_embeddings + position_embeddings # [batch_size, seq_len, hidden_dim]
-            logger.info(f"Input embeddings shape: {x.shape}")      
+            logger.info(f"Input embeddings shape: {x.shape}")  
+                
         #logger.info(f"Input shape: {x.shape}")
         #
         # 应用旋转位置编码
@@ -133,17 +138,12 @@ class ComplexFormerModel(PreTrainedModel):
                     preserve_rng_state=True # 保证 dropout 等随机性一致
                 )
                 x = layer_outputs
-                logger.info(f"block {block},rmsnorm Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}, ")
                 logger.info(f"Transformer block output shape with ckpt: {x.shape}")
             else:
                 x = block(x, padding_mask=attention_mask)
                 logger.info(f"Transformer block output shape no ckpt: {x.shape}")
         logger.info(f"Transformer block output shape: {x.shape}")
-
-        x = self.rmsnorm(x)
-        logger.info(f"rmsnorm Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}, ")
-        x = self.linear(x)
-        logger.info(f"linear Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}, ")
+        x = self.linear(x) if self.vq_logits is None else self.vq_logits(x)
         logger.info(f"Linear layer output shape: {x.shape}")
         # x = self.softmax(x)
         # logger.info(f"Softmax output shape: {x.shape}") #gradient loss
@@ -161,7 +161,7 @@ class ComplexFormerModel(PreTrainedModel):
             if module.bias is not None:
                 nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            nn.init.normal_(module.weight, mean=0.0, std=1.0) # 或者用 xavier_uniform_
+            nn.init.kaiming_normal_(module.weight, nonlinearity='leaky_relu') # 或者用 xavier_uniform_
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
         # 可以为其他类型的层添加特定的初始化，例如 LayerNorm/RMSNorm
@@ -170,7 +170,6 @@ class ComplexFormerModel(PreTrainedModel):
                 nn.init.ones_(module.weight)
             if hasattr(module, 'bias') and module.bias is not None:
                 nn.init.zeros_(module.bias)
-        
     def _togger_loger(self):
         if self.debug == False:
             logger.setLevel(logging.WARNING)
@@ -378,10 +377,10 @@ class TransformerBlock(nn.Module):
         self.ffn: FFN = FFN(config)
         self.rmsnorm: RMSNorm = RMSNorm(config.hidden_dim)
         self.config: CustomConfig = config
-        self.residual_scale = 0.2
 
     def forward(self, x: Tensor, padding_mask: Tensor) -> Tensor:
-        x_norm = self.rmsnorm(x)
+        residual: Tensor = x
+        x = self.rmsnorm(x)
         logger.info(f"TransformerBlock Input shape: {x.shape}")
         seq_len: int = x.shape[1]
         causal_mask: Tensor = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(x.device)
@@ -389,27 +388,25 @@ class TransformerBlock(nn.Module):
         
         if self.config.complex_attention:
             logger.info('using complex attention')
-            atten_out = self.attention(x_norm, x_norm, x_norm, mask=padding_mask)
+            x = self.attention(x, x, x, mask=padding_mask)
         else:
             #TODO
             def atten_forward(x: Tensor) -> Tensor:
                 return self.attention(x, x, x, attn_mask=causal_mask)[0]
             logger.info(f'before forward{x.dtype}')
-            atten_out = atten_forward(x.bfloat16())
+            x = atten_forward(x.bfloat16())
             logger.info(f'after forward{x.dtype}')
-
-        x = x + self.residual_scale * atten_out
-        x_norm2 = self.rmsnorm(x)
+        x = self.rmsnorm(x + residual)
         logger.info(f"TransformerBlock after rmsnorm shape: {x.shape}")
-        logger.info(f"block Mean: {x.mean().item():.4f}, Std: {x.std().item():.4f}, ")
 
         if torch.isnan(x).any():
             logger.info(f"TransformerBlock after rmsnorm has nan")
             raise ValueError("TransformerBlock after rmsnorm has nan")
-        ffn_out = self.ffn(x_norm2)
-        x = x + self.residual_scale * ffn_out
+        residual = x
+        x = self.ffn(x)
         return x
 
+    
 
 
 
@@ -435,20 +432,19 @@ def main(config: Dict[str, Any]) -> None:
     #deepspeed config
 
     model: ComplexFormerModel = ComplexFormerModel(config=load_config(args.config)).to(device)
+    model.to(torch.bfloat16)
     
-
     #
-    model.gradient_checkpointing_enable()
     test_model(model,config)
 
-   
-    model.save_pretrained(config.model.save_dir)
+    model.gradient_checkpointing_enable()
+    model.save_pretrained(config.model.save_dir) if config.vq_logits is False else model.save_pretrained("./vq_logits_model")
     logger.info(f"Model saved to {config.model.save_dir}")
 
      # --- Calculate Parameters ---
     num_params = sum(p.numel() for p in model.state_dict().values() if torch.is_tensor(p))
     print(f"Trainable model parameters: {num_params/1e9:,}B")
-    print_model_parameters_llm(model)
+    #print_model_parameters_llm(model)
 
 
     # 2. 打印模型参数的函数
@@ -515,8 +511,6 @@ def test_model(model: ComplexFormerModel,config) -> None:
 if __name__ == '__main__':
     main()
 
-AutoConfig.register("ComplexFormer", CustomConfig)
-AutoModel.register(CustomConfig, ComplexFormerModel)
 
 
 
