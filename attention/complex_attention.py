@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import math
 import logging
 from typing import Optional
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.FileHandler('./logs/complex_attention.log')) #确保日志能输出
@@ -61,9 +61,23 @@ class ComplexMultiHeadAttentionV2(nn.Module):
         self.softmax = nn.Softmax(dim=-1) # To apply after scores
 
         self.query_chunk_size = 8
+
+        
         logger.info(f"ComplexAttention initialized with query_chunk_size: {self.query_chunk_size}")
 
         self.register_buffer('g', self._get_frequencies()) # 新方式
+        self.apply(self._init_weights) # Initialize weights
+
+    def _init_weights(self, module):
+        for module in [self.W_q, self.W_k, self.W_v, self.W_o]:
+            nn.init.xavier_uniform_(module.weight)
+
+        # Optional: if you use bias in Linear layers
+        # if module.bias is not None:
+        #     nn.init.constant_(module.bias, 0.0)
+
+        nn.init.normal_(self.delta_params, mean=0.0, std=1.0 / self.d_k_half ** 0.5)
+        nn.init.constant_(self.bias_params, 0.0)
 
     def _get_frequencies(self, max_len: int = 5000) -> torch.Tensor:
         # Calculate frequencies (g_i) for positional encoding
@@ -118,13 +132,16 @@ class ComplexMultiHeadAttentionV2(nn.Module):
         return delta_p 
 
         
-    def forward(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+    def forward(self, hidden_states: torch.Tensor, attention_mask: Optional[torch.Tensor] = None,**kwargs) -> torch.Tensor:
         """
         q: (batch_size, query_len, d_model)  - 输入的查询序列
         k: (batch_size, key_len, d_model)    - 输入的键序列
         v: (batch_size, value_len, d_model)  - 输入的值序列
         mask: (batch_size, 1, query_len, key_len) or (batch_size, query_len, key_len) - 可选的注意力掩码
         """
+        q,k,v = hidden_states,hidden_states,hidden_states # Assuming self-attention where q=k=v
+        if q.dim() != 3 or k.dim() != 3 or v.dim() != 3:
+            raise ValueError(f"Expected q, k, v to have 3 dimensions (B, L, D), got q: {q.dim()}, k: {k.dim()}, v: {v.dim()}")
         batch_size: int = q.size(0)
         query_len: int = q.size(1)
         key_len: int = k.size(1)
@@ -180,7 +197,7 @@ class ComplexMultiHeadAttentionV2(nn.Module):
         # phase_k_unsqueezed for broadcasting with phase_q_chunk
         phase_k_unsqueezed = phase_k.unsqueeze(2) # (B, H, 1, KL, DK/2)
 
-        with autocast(dtype=torch.bfloat16):
+        with autocast('cuda',dtype=torch.bfloat16):
             for i in range(num_q_chunks):
                 q_start = i * effective_query_chunk_size
                 q_end = min((i + 1) * effective_query_chunk_size, query_len)
@@ -227,19 +244,19 @@ class ComplexMultiHeadAttentionV2(nn.Module):
                 raise ValueError("Scores contains NaN")
 
             # Apply mask (if provided)
-            if mask is not None:
+            if attention_mask is not None:
                 # Ensure mask has 4 dimensions: (B, 1, QL, KL) or (B, H, QL, KL)
-                if mask.dim() == 3: # (B, QL, KL)
-                    mask = mask.unsqueeze(1) # (B, 1, QL, KL)
-                if mask.dim() == 2:
-                    mask = mask.unsqueeze(1).unsqueeze(1)
+                if attention_mask.dim() == 3: # (B, QL, KL)
+                    attention_mask = attention_mask.unsqueeze(1) # (B, 1, QL, KL)
+                if attention_mask.dim() == 2:
+                    attention_mask = attention_mask.unsqueeze(1).unsqueeze(1)
                 # Mask should be (B, 1, QL, KL) or (B, H, QL, KL)
                 # Scores are (B, H, QL, KL)
                 # Mask values are typically 0 for positions to attend to, and -inf (or large negative) for masked positions.
                 # Or, if mask is boolean (True for masked), convert it.
                 # Assuming mask uses -inf for masked positions:
-                assert mask.dim()==4, f"Mask should have 4 dimensions (B, 1, QL, KL) or (B, H, QL, KL), got {mask.dim()} dimensions"
-                scores = scores + mask # Broadcasting if mask is (B, 1, QL, KL)
+                assert attention_mask.dim()==4, f"Mask should have 4 dimensions (B, 1, QL, KL) or (B, H, QL, KL), got {mask.dim()} dimensions"
+                scores = scores + attention_mask # Broadcasting if mask is (B, 1, QL, KL)
 
             # Apply softmax
             
@@ -260,11 +277,12 @@ class ComplexMultiHeadAttentionV2(nn.Module):
             output = output.transpose(1, 2).contiguous().view(batch_size, query_len, self.d_model)
             output = self.W_o(output) # Final linear projection
 
+            logger.info(f"Output shape after W_o: {output.std().item()}")
             if torch.isnan(output).any():
                 logger.error("Output contains NaN after W_o")
                 raise ValueError("Output contains NaN")
             
-        return output
+        return output,attention_weights
 if __name__ == '__main__':
     batch_size = 2
     seq_len_q = 512# Query length
@@ -316,8 +334,8 @@ if __name__ == '__main__':
         print(f"Input k shape: {k_tensor.shape}")
         print(f"Input v shape: {v_tensor.shape}")
         print(f"Input attention_mask shape: {attention_mask.shape}")
-        output_vec = cmha_vec(q_tensor, k_tensor, v_tensor, mask=attention_mask)
-        print("Vectorized Output shape:", output_vec.shape)
+        output_vec = cmha_vec(q_tensor, mask=attention_mask)
+        print("Vectorized Output shape:", output_vec.output.shape)
     except RuntimeError as e:
         print(f"Vectorized version caught RuntimeError: {e}")
         print("This error is expected if actual_key_len_for_k (from k_tensor) which determines scores.shape[-1] "
@@ -342,8 +360,8 @@ if __name__ == '__main__':
         print(f"Input k_c shape: {k_tensor_c.shape}")
         print(f"Input v_c shape: {v_tensor_c.shape}")
         print(f"Input attention_mask_c shape: {attention_mask_c.shape}")
-        output_vec_c = cmha_vec(q_tensor_c, k_tensor_c, v_tensor_c, mask=attention_mask_c)
-        print("Vectorized Consistent Output shape:", output_vec_c.shape)
+        output_vec_c = cmha_vec(q_tensor_c,attention_mask=attention_mask_c)
+        print("Vectorized Consistent Output shape:", output_vec_c.output.shape)
         assert output_vec_c.shape == (batch_size, seq_len_q, d_model)
         print("Test with matching key lengths PASSED.")
     except Exception as e:
@@ -352,8 +370,8 @@ if __name__ == '__main__':
 
     print("\n--- Testing without mask ---")
     try:
-        output_no_mask = cmha_vec(q_tensor_c, k_tensor_c, v_tensor_c, mask=None)
-        print("Vectorized No Mask Output shape:", output_no_mask.shape)
+        output_no_mask = cmha_vec(q_tensor_c, attention_mask=None)
+        print("Vectorized No Mask Output shape:", output_no_mask.output.shape)
         assert output_no_mask.shape == (batch_size, seq_len_q, d_model)
         print("Test without mask PASSED.")
     except Exception as e:
