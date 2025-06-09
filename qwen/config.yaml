@@ -1,0 +1,210 @@
+
+mode: sample   # train / ppl_eval / sample
+# model 根据需要更改 
+architecture: 'ComplexFormer'  # AutoDiffusionLM / DiffusionLM
+max_seq_len : 1024
+hidden_dim : 512
+n_layers : 8
+num_attention_heads : 8
+multiple_of : 32
+dropout : 0.1 # for pretraining 0 is good, for finetuning try 0.1+
+bias : False # do we use bias inside LayerNorm and Linear layers?
+intermediate_size : 512
+vocab_size: 250002
+rope_scaling_factor: 1.0
+rope_beta: 10000.0
+rope_scaling_type: 'dynamic'
+embedding_type: 'default'  # default/Abacus
+batch_size: 4
+max_input_ids_length: 1024
+tokenizer_name: './qwen' 
+tokenizer_cache: './qwen/'
+data_path: './dataset/da'
+debug: False
+complex_attention: True 
+flash_attn: False
+n_kv_heads: 8
+bos_token_id: 151643,
+pad_token_id: 151645,
+eos_token_id: 151645,
+
+# training
+# train:
+#   epochs: 1
+#   steps_per_epoch: 1
+#   learning_rate: 1e-4
+#   learning_rate_decay: 0.0
+#   warmup_steps: 1000
+#   weight_decay: 0.0
+#   adam_beta1: 0.9
+#   adam_beta2: 0.95
+#   adam_epsilon: 1e-8
+#   gradient_accumulation_steps: 1
+#   max_grad_norm: 1.0
+#   seed: 42
+#   fp16: False
+#   fp16_opt_level: 'O1'
+#   gradient_checkpointing: False
+#   gradient_checkpointing_kwargs: {}
+#   #output_pat: "results/nightmare_1.5b"
+
+
+# defaults:
+#   - _self_
+#   - /callbacks: [checkpoint_every_n_steps, checkpoint_monitor, learning_rate_monitor]
+#   - /data: openwebtext
+#   - /model: small
+#   - /strategy: ddp
+#   - /noise: loglinear
+#   - /lr_scheduler: constant_warmup
+#   - /algo: bd3lm
+
+
+diffusion: absorbing_state
+
+seed: 42
+
+block_size: ${model.length}
+
+# loader:
+#   global_batch_size: 512
+#   eval_global_batch_size: ${.global_batch_size}
+#   # Note: batch_size and eval_batch_size are **per machine**
+#   batch_size: ${div_up:${.global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}
+#   eval_batch_size: ${div_up:${.eval_global_batch_size}, ${eval:${trainer.devices} * ${trainer.num_nodes}}}
+#   num_workers: ${eval:"len(__import__('os').sched_getaffinity(0))"}
+#   pin_memory: True
+
+# sampling:
+#   noise_removal: False
+#   num_sample_batches: 1  # Total samples: `num_gpus` * `loader.eval_batch_size` * num_sample_batches
+#   var_length: False
+#   logdir: ./samples_${algo.name}_len${model.length}_blocksize${block_size}
+#   nucleus_p: 1.0
+#   first_hitting: True # should be set to true when T >> block_size
+#   kv_cache: False
+
+training:
+  epochs: 1 #key for training
+  steps_per_epoch: 100
+  learning_rate: 1e-5
+  learning_rate_decay: 0.0
+  warmup_steps: 1000
+  warmup_ratio: 0.05
+  weight_decay: 0.0
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+  adam_epsilon: 1e-8
+  lr_scheduler_type: cosine
+  gradient_accumulation_steps: 4 #key 
+  max_grad_norm: 1.0
+  seed: 42
+  fp16_opt_level: 'O1'
+  gradient_checkpointing: False
+  gradient_checkpointing_kwargs: {}
+  output_path: ./checkpoints/last.ckpt
+  final_path: ./checkpoints/last.ckpt/checkpoint-4500  #for sample
+  #final_path: ./model #-------------------------------
+  log_step: 100
+  debug: False
+  batch_size: 2
+  mixed_precision: bf16
+  bf16: True
+  fp16: False
+  save_steps: 300
+  save_total_limit: 3
+  early_stopping_patience: 3
+
+eval:
+  checkpoint_path: ./checkpoints/last.ckpt/final_model  # Used to evaluate a checkpoint after training.
+  disable_ema: False
+  perplexity_batch_size: 8
+  compute_perplexity_on_sanity: False
+  gen_ppl_eval_model_name_or_path: gpt2-large  # gpt2-large, meta-llama/Llama-2-7b-hf
+  generate_samples: False
+
+optim:
+  weight_decay: 0
+  lr: 3e-4
+  beta1: 0.9
+  beta2: 0.999
+  eps: 1e-8
+
+# trainer:
+#   _target_: lightning.Trainer
+#   accelerator: cuda
+#   num_nodes: 1
+#   devices: ${device_count:}
+#   #accumulate_grad_batches: ${div_up:${loader.global_batch_size}, ${eval:${trainer.devices} * ${loader.batch_size} * ${trainer.num_nodes}}}
+#   gradient_clip_val: 1.0
+#   precision: 'bf16'
+#   num_sanity_val_steps: 2
+#   max_steps: 1_000_000
+#   log_every_n_steps: 1_000
+#   limit_train_batches: 1.0   # train on full dataset, can be used to toggle quick run
+#   limit_val_batches: 1.0     # validate on full dataset, can be used to toggle quick run
+#   val_check_interval: 10_000
+
+wandb:
+  project: complexformer
+  notes: complexformer
+  group: null
+  job_type: null
+  name: train_eval_vinilla
+#   id: ${.name}_${seed}
+#   tags:
+#     - ${noise.type}
+#     - ${data.train}
+#     - ${data.valid}
+
+hydra:
+  run:
+    dir: ./
+  job:
+    chdir: true
+
+checkpointing:
+  # Use custom `save_dir` if, e.g., saving to S3 bucket, otherwise leave this parameter as is
+  save_dir: ./checkpoints
+  # Note: `checkpoints` path should correspond to `checkpoint_every_n_steps.dirpath`
+  resume_from_ckpt: true
+  resume_ckpt_path: ${.save_dir}/last.ckpt/
+
+data:
+  train: "./dataset/da"
+  output_dir: ./data/pt/huggingface/preprocessed_datasets
+
+model:
+  save_dir: ./model
+  length: 512
+  custom_model_load_path: ./qwen_model/
+
+
+tokenizer:
+  cache: ./tokenizer/cache
+
+deepspeed:
+  zero_stage: 2 # 或 3，根据你的需求调整
+  offload_optimizer:
+    device: "cpu" # 或 "nvme"
+    pin_memory: true
+  offload_param:
+    device: "cpu" # 或 "nvme"
+    pin_memory: true
+  pipeline:
+    enabled: true # 启用流水线并行
+    num_stages: 8 # 设置流水线阶段数 (等于卡数)
+    stage_id: ${oc.env:LOCAL_RANK} # 每个进程的阶段 ID
+  tensor_parallel:
+    enabled: true # 启用张量并行
+    size: 8 # 张量并行大小 (等于卡数)
+  kernel_injection:
+    enable: true # 启用内核注入优化
+  config_path: ./pretrain/zero3.json # DeepSpeed 配置文件路径
+
+
+image:
+  encoder: 
+    pretrained_model_name: "google/vit-base-patch16-224"
+    cache: ./image/encoder/cache
+
