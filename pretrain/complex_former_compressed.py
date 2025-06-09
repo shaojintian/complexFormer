@@ -16,7 +16,7 @@ from attention import ComplexMultiHeadAttentionV2
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate.utils import DistributedType
 import os
-from .vq_logits_model import VQLogits
+from ..vqlogits.vq_logits_module import VQLogits
 #from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
 
 #traceback.install(show_locals=True)

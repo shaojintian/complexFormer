@@ -24,6 +24,7 @@ logger: logging.Logger = logging.getLogger(__name__)
 logger.propagate = False
 logger.addHandler(logging.FileHandler("logs/model.log"))
 
+__all__ = ["ComplexFormerModel", "CustomConfig","test_model"]
 
 class CustomConfig(PretrainedConfig):
     model_type: str = "ComplexFormer"
@@ -186,7 +187,7 @@ class ComplexFormerModel(PreTrainedModel):
         repetition_penalty: float = 1.0,
         eos_token_id: Optional[int] = None,
         pad_token_id: Optional[int] = None,
-        use_cache: bool = True,
+        use_cache: bool = False,
         **kwargs):
         
         self.eval() # Set model to evaluation mode
@@ -284,7 +285,7 @@ class ComplexFormerModel(PreTrainedModel):
                 
         return generated_ids
 
-        
+
 class FFN(nn.Module):
     def __init__(self, config: CustomConfig):
         super().__init__()

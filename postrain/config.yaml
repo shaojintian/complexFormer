@@ -1,8 +1,8 @@
 
-mode: train   # train / ppl_eval / sample
+mode: sample   # train / ppl_eval / sample
 # model 根据需要更改 
-architecture: 'AutoDiffusionLM'  # AutoDiffusionLM / DiffusionLM
-max_seq_len : 512
+architecture: 'ComplexFormer'  # AutoDiffusionLM / DiffusionLM
+max_seq_len : 1024
 hidden_dim : 512
 n_layers : 8
 num_attention_heads : 8
@@ -22,6 +22,8 @@ tokenizer_cache: './tokenizer/cache/FacebookAI/xlm-roberta-base'
 data_path: './dataset/da'
 debug: False
 complex_attention: True 
+vq_logits: True
+K_CODES: 50
 flash_attn: False
 n_kv_heads: 8
 
@@ -100,8 +102,8 @@ training:
   gradient_checkpointing: False
   gradient_checkpointing_kwargs: {}
   output_path: ./checkpoints/last.ckpt
-  final_path: ./checkpoints/last.ckpt/checkpoint-1800
-  #final_path: ./model #-------------------------------
+  #final_path: ./checkpoints/last.ckpt/checkpoint-1500
+  final_path: ./model #-------------------------------
   log_step: 100
   debug: False
   batch_size: 8
@@ -169,7 +171,7 @@ checkpointing:
 
 data:
   train: "./dataset/da"
-  output_dir: ./data/sft/huggingface/preprocessed_datasets
+  output_dir: ./data/pt/huggingface/preprocessed_datasets
 
 model:
   save_dir: ./model
@@ -181,7 +183,7 @@ tokenizer:
   cache: ./tokenizer/cache
 
 deepspeed:
-  zero_stage: 2 # 或 3，根据你的需求调整
+  zero_stage: 3 # 或 3，根据你的需求调整
   offload_optimizer:
     device: "cpu" # 或 "nvme"
     pin_memory: true
@@ -197,5 +199,11 @@ deepspeed:
     size: 8 # 张量并行大小 (等于卡数)
   kernel_injection:
     enable: true # 启用内核注入优化
-  config_path: ./pretrain/acc_config.yaml # DeepSpeed 配置文件路径
+  config_path: ./pretrain/zero3.json # DeepSpeed 配置文件路径
+
+
+image:
+  encoder: 
+    pretrained_model_name: "google/vit-base-patch16-224"
+    cache: ./image/encoder/cache
 

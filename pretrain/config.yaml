@@ -1,5 +1,5 @@
 
-mode: train   # train / ppl_eval / sample
+mode: sample   # train / ppl_eval / sample
 # model 根据需要更改 
 architecture: 'ComplexFormer'  # AutoDiffusionLM / DiffusionLM
 max_seq_len : 1024
@@ -17,13 +17,16 @@ rope_scaling_type: 'dynamic'
 embedding_type: 'default'  # default/Abacus
 batch_size: 4
 max_input_ids_length: 1024
-tokenizer_name: 'FacebookAI/xlm-roberta-base' 
-tokenizer_cache: './tokenizer/cache/FacebookAI/xlm-roberta-base'
+tokenizer_name: './qwen' 
+tokenizer_cache: './qwen/'
 data_path: './dataset/da'
 debug: False
 complex_attention: True 
 flash_attn: False
 n_kv_heads: 8
+bos_token_id: 151643,
+pad_token_id: 151645,
+eos_token_id: 151645,
 
 # training
 # train:
@@ -100,7 +103,7 @@ training:
   gradient_checkpointing: False
   gradient_checkpointing_kwargs: {}
   output_path: ./checkpoints/last.ckpt
-  final_path: ./checkpoints/last.ckpt/checkpoint-900  #for sample
+  final_path: ./checkpoints/last.ckpt/checkpoint-4500  #for sample
   #final_path: ./model #-------------------------------
   log_step: 100
   debug: False
